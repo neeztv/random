@@ -1,4 +1,4 @@
-"""Player car: drift physics, gearbox, collisions, scoring, particles, skid marks, sound."""
+"""Player scooter: drift + wheelie physics, collisions, scoring, particles, skid marks, sound."""
 import math
 import random
 import struct
@@ -8,13 +8,15 @@ from panda3d.core import (BitMask32, Filename, Geom, GeomNode, GeomTriangles, Ge
                           GeomVertexWriter, OmniBoundingVolume, TransparencyAttrib)
 from ursina import Audio, Entity, Vec3, Vec4, application, color, held_keys, scene
 
-from .cars import CARS
+from .scooters import SCOOTERS
 from .core import CACHE_DIR, clamp, lerp, make_soft_texture
 
 SHADOW_CAM = BitMask32.bit(1)
-GEAR_TOP = [0, 0.26, 0.42, 0.58, 0.73, 0.87, 1.0]
-GEAR_ACC = [0, 1.0, 0.8, 0.64, 0.52, 0.43, 0.36]
-GRADES = [(500, 'DRIFT'), (1500, 'DOBRY DRIFT'), (4000, 'ŚWIETNY DRIFT!'), (10000, 'SZALONY DRIFT!!'), (1e18, 'LEGENDARNY!!!')]
+GRADES = {
+    'DRIFT': [(500, 'DRIFT'), (1500, 'DOBRY DRIFT'), (4000, 'ŚWIETNY DRIFT!'), (10000, 'SZALONY DRIFT!!'), (1e18, 'LEGENDARNY!!!')],
+    'WHEELIE': [(500, 'WHEELIE'), (1500, 'DOBRE WHEELIE'), (4000, 'ŚWIETNE WHEELIE!'), (10000, 'SZALONE WHEELIE!!'), (1e18, 'LEGENDA KOŁA!!!')],
+    'WHEELIE DRIFT': [(1500, 'WHEELIE DRIFT'), (5000, 'WHEELIE DRIFT!!'), (1e18, 'KRÓL ULICY!!!')],
+}
 
 
 # ---------------------------------------------------------------------------
@@ -166,18 +168,17 @@ def _write_wav(path, samples):
         w.writeframes(b''.join(struct.pack('<h', int(clamp(s, -1, 1) * 32000)) for s in samples))
 
 
-def _gen_engine():
+def _gen_motor():
+    """Electric hub-motor whine: 1 s seamless loop (integer frequencies)."""
     rnd = random.Random(1)
-    n = RATE
-    phases = [rnd.random() * math.tau for _ in range(14)]
     out = []
-    for i in range(n):
+    for i in range(RATE):
         t = i / RATE
-        v = 0.0
-        for k in range(1, 14):
-            v += math.sin(math.tau * 60 * k * t + phases[k]) / (k ** 0.9)
-        v *= 0.7 + 0.3 * math.sin(math.tau * 30 * t)
-        out.append(v * 0.22)
+        v = (0.5 * math.sin(math.tau * 110 * t) + 0.35 * math.sin(math.tau * 220 * t + 1.3)
+             + 0.3 * math.sin(math.tau * 660 * t + 0.4) + 0.22 * math.sin(math.tau * 1320 * t + 2.1)
+             + 0.12 * math.sin(math.tau * 2640 * t))
+        v *= 0.85 + 0.15 * math.sin(math.tau * 12 * t)
+        out.append(v * 0.3 + rnd.uniform(-0.03, 0.03))
     return out
 
 
@@ -220,7 +221,7 @@ class Sound:
     def __init__(self, volume=0.7):
         self.volume = volume
         CACHE_DIR.mkdir(exist_ok=True)
-        gens = {'engine': _gen_engine, 'screech': _gen_screech, 'crash': _gen_crash,
+        gens = {'motor': _gen_motor, 'screech': _gen_screech, 'crash': _gen_crash,
                 'click': lambda: _gen_tone([1300], 0.06, 50, 0.35),
                 'select': lambda: _gen_tone([880, 1320], 0.14, 25, 0.35),
                 'score': lambda: _gen_tone([660, 880, 1320], 0.36, 12, 0.4),
@@ -232,7 +233,7 @@ class Sound:
                 _write_wav(p, fn())
             self.clips[name] = p
         self.sfx = {}
-        self.engine = self._loop('engine')
+        self.engine = self._loop('motor')
         self.screech = self._loop('screech')
 
     def _load(self, name):
@@ -251,40 +252,39 @@ class Sound:
         s.set_play_rate(pitch)
         s.play()
 
-    def set_engine(self, rpm, throttle, slide, speed, active):
+    def set_engine(self, ratio, throttle, slide, speed, active):
         if not active:
             self.engine.volume = 0
             self.screech.volume = 0
             return
-        self.engine.pitch = 0.45 + rpm / 8000 * 1.5
-        self.engine.volume = self.volume * (0.28 + 0.3 * throttle)
-        self.screech.volume = self.volume * clamp(slide * min(1.0, speed / 15), 0, 1) * 0.5
-        self.screech.pitch = 0.9 + min(speed, 40) / 200
+        self.engine.pitch = 0.35 + ratio * 1.25 + throttle * 0.08
+        self.engine.volume = self.volume * (0.12 + 0.25 * throttle + 0.2 * ratio)
+        self.screech.volume = self.volume * clamp(slide * min(1.0, speed / 12), 0, 1) * 0.4
+        self.screech.pitch = 1.0 + min(speed, 30) / 150
 
 
 # ---------------------------------------------------------------------------
-#   PLAYER CAR
+#   PLAYER SCOOTER
 # ---------------------------------------------------------------------------
 
 class PlayerCar:
+    """Player scooter (the name is kept so the game loop stays vehicle-agnostic)."""
+
     def __init__(self, game, visual):
         self.game = game
         self.visual = visual
         self.skids = SkidMarks()
         self.fx = Particles()
         self.headlights = True
-        self.manual = False
-        self.gear = 1
+        self.first_person = False
         self.reset(0, 40, 0)
 
     @property
     def spec(self):
-        return CARS[self.visual.spec_index]
+        return SCOOTERS[self.visual.spec_index]
 
     def reset(self, x, z, heading):
         self.respawn(x, z, heading)
-        self.gear = 1
-        self.rpm = 900.0
         self.nitro = 100.0
         self.score = 0
         self.mult = 1
@@ -301,19 +301,23 @@ class PlayerCar:
         self.slip = 0.0
         self.speed = 0.0
         self.vl = 0.0
-        self.shift_t = 0.0
+        self.ratio = 0.0
         self.nitro_on = False
         self.throttle = 0.0
         self.braking = False
-        self.roll = self.pitch = 0.0
-        self.spin = 0.0
-        self.last_skid = [None, None]
+        self.lean = 0.0
+        self.lean_fwd = 0.0
+        self.wheelie = 0.0
+        self.wheelie_v = 0.0
+        self.last_skid = [None]
         self.smoke_acc = 0.0
         self.drift_pts = 0.0
         self.drift_time = 0.0
         self.drift_grace = 0.0
+        self.trick = 'DRIFT'
         self.near = False
         self.drifting = False
+        self.wheelie_on = False
         self.crash_cool = 0.0
         self.visual.position = (x, 0, z)
         self.visual.rotation_y = heading
@@ -328,20 +332,16 @@ class PlayerCar:
             st = pad
         hb = held_keys['space'] or held_keys['gamepad a']
         nos = held_keys['left shift'] or held_keys['right shift'] or held_keys['gamepad x']
-        return clamp(thr, 0, 1), clamp(brk, 0, 1), clamp(st, -1, 1), bool(hb), bool(nos)
+        wh = held_keys['left control'] or held_keys['right control'] or held_keys['control'] or held_keys['gamepad b']
+        return clamp(thr, 0, 1), clamp(brk, 0, 1), clamp(st, -1, 1), bool(hb), bool(nos), bool(wh)
 
     def shift(self, d):
-        if self.manual:
-            g = clamp(self.gear + d, 1, 6)
-            if g != self.gear:
-                self.gear = g
-                self.shift_t = 0.12
-                self.game.on_shift(g)
+        pass
 
     # --------------------------------------------------------------- physics
     def update(self, dt, controls=True):
         spec = self.spec
-        thr, brk, st_in, hb, nos = self.read_input() if controls else (0, 0, 0, False, False)
+        thr, brk, st_in, hb, nos, wh = self.read_input() if controls else (0, 0, 0, False, False, False)
         self.throttle = thr
         h = math.radians(self.heading)
         fx, fz = math.sin(h), math.cos(h)
@@ -350,75 +350,77 @@ class PlayerCar:
         vs = self.vx * rx + self.vz * rz
         speed = math.hypot(self.vx, self.vz)
 
+        in_wheelie = self.wheelie > 8
         self.steer += (st_in - self.steer) * min(1.0, dt * (7.0 if st_in else 9.0))
         slip = math.degrees(math.atan2(vs, max(abs(vl), 1.0)))
         self.slip = slip
 
         target = 0.0
-        if hb and speed > 5:
+        if hb and speed > 4:
             target = 1.0
-        elif thr > 0.6 and abs(self.steer) > 0.45 and speed > 13:
+        elif thr > 0.6 and abs(self.steer) > 0.6 and speed > 12:
             target = spec['power_slide'] * 0.75
-        if abs(slip) > 8 and thr > 0.3 and speed > 6:
-            target = max(target, 0.55 + 0.4 * spec['power_slide'])
-        if speed < 3:
+        if abs(slip) > 8 and thr > 0.3 and speed > 5:
+            target = max(target, 0.5 + 0.4 * spec['power_slide'])
+        if speed < 2.5:
             target = 0.0
         up = target > self.slide
-        self.slide += (target - self.slide) * min(1.0, dt * (5.0 if up else (1.3 if thr > 0.3 else 2.6)))
+        self.slide += (target - self.slide) * min(1.0, dt * (5.0 if up else (1.4 if thr > 0.3 else 2.8)))
         grip = lerp(spec['grip'], spec['drift_grip'], self.slide)
         vs *= math.exp(-grip * dt)
 
-        # gearbox
-        vmax = spec['vmax'] * (1.18 if self.nitro_on else 1.0)
-        tops = [g * vmax * 1.05 for g in GEAR_TOP]
-        if not self.manual and self.shift_t <= 0:
-            if self.gear < 6 and vl > tops[self.gear] * 0.94:
-                self.gear += 1
-                self.shift_t = 0.18
-                self.game.on_shift(self.gear)
-            elif self.gear > 1 and vl < tops[self.gear - 1] * 0.62:
-                self.gear -= 1
-                self.shift_t = 0.1
-                self.game.on_shift(self.gear)
-        self.shift_t -= dt
-        ratio = clamp(abs(vl) / tops[self.gear], 0, 1.03)
-        target_rpm = 900 + 7100 * ratio + self.slide * thr * 1500 + (thr * 800 if speed < 2 else 0)
-        self.rpm += (clamp(target_rpm, 900, 8200) - self.rpm) * min(1.0, dt * 10)
-
+        # electric motor: strong torque, controller-limited top speed
+        vmax = spec['vmax_kmh'] / 3.6 * (1.15 if self.nitro_on else 1.0)
+        self.ratio = clamp(abs(vl) / (spec['vmax_kmh'] / 3.6), 0, 1.2)
+        self.rpm = 900 + 7100 * min(self.ratio, 1.0)
         self.nitro_on = nos and self.nitro > 0 and thr > 0.1
         if self.nitro_on:
-            self.nitro = max(0.0, self.nitro - 30 * dt)
+            self.nitro = max(0.0, self.nitro - 28 * dt)
         else:
-            self.nitro = min(100.0, self.nitro + (10.0 if self.drifting else 2.5) * dt)
+            self.nitro = min(100.0, self.nitro + (12.0 if (self.drifting or self.wheelie_on) else 3.0) * dt)
 
         acc = 0.0
-        if thr > 0 and self.shift_t <= 0 and ratio < 1.0:
-            acc += thr * spec['accel'] * GEAR_ACC[self.gear] * (1.45 if self.nitro_on else 1.0)
+        if thr > 0:
+            acc += thr * spec['accel'] * (1.3 if self.nitro_on else 1.0) * clamp(6.0 * (1 - vl / (vmax * 1.03)), 0, 1)
         self.braking = False
         if brk > 0:
-            if vl > 0.8:
-                acc -= brk * 24
+            if vl > 0.6:
+                acc -= brk * 10
                 self.braking = True
-            elif vl > -11:
-                acc -= brk * 8
-        lin = 0.02
-        drag_c = (spec['accel'] * GEAR_ACC[6] - lin * spec['vmax']) / (spec['vmax'] ** 2)
-        acc -= drag_c * vl * abs(vl) + lin * vl
+            elif vl > -4:
+                acc -= brk * 3
+        acc -= 0.02 * vl + 0.0015 * vl * abs(vl)
         if hb:
-            acc -= math.copysign(5.0, vl) if abs(vl) > 0.5 else 0
-        acc -= math.copysign(abs(math.sin(math.radians(slip))) * 5.0, vl) if abs(vl) > 0.5 else 0
+            acc -= math.copysign(3.0, vl) if abs(vl) > 0.5 else 0
+        acc -= math.copysign(abs(math.sin(math.radians(slip))) * 3.5, vl) if abs(vl) > 0.5 else 0
         vl += acc * dt
-        if brk > 0 and abs(vl) < 0.3 and not self.braking and acc < 0 and vl > 0:
+        if brk > 0 and not self.braking and acc < 0 and 0 < vl < 0.3:
             vl = 0.0
 
-        max_steer = spec['steer'] * (1 - 0.55 * min(speed / 60, 1))
+        # wheelie: spring towards a balance angle while CTRL is held
+        w_target = 0.0
+        if wh and vl > 2.0 and not self.braking:
+            w_target = 34 + 4 * math.sin(self.game.clock * 2.3) + thr * 4
+        k, c = (40.0, 8.0) if w_target > 0 else (55.0, 6.0)
+        self.wheelie_v += (k * (w_target - self.wheelie) - c * self.wheelie_v) * dt
+        self.wheelie += self.wheelie_v * dt
+        if self.wheelie > 62:
+            self.wheelie, self.wheelie_v = 62, 0.0
+        if self.wheelie < 0:
+            if self.wheelie_v < -60:
+                self.game.on_land(-self.wheelie_v)
+            self.wheelie = 0.0
+            self.wheelie_v = -self.wheelie_v * 0.2 if self.wheelie_v < -60 else 0.0
+
+        steer_auth = 0.45 if in_wheelie else 1.0
+        max_steer = spec['steer'] * (1 - 0.7 * min(speed / 25, 1)) * steer_auth
         steer_deg = self.steer * max_steer
         wb = self.visual.info['front_z'] - self.visual.info['rear_z']
         r_kin = math.degrees(vl / wb * math.tan(math.radians(steer_deg)))
-        lim = math.degrees(spec['grip'] * 1.45 / max(speed, 4.0))
+        lim = math.degrees(spec['grip'] * 1.25 / max(speed, 3.0))
         r_kin = clamp(r_kin, -lim, lim)
         assist = 4.0 * clamp((abs(slip) - 38) / 25, 0, 1)
-        r_drift = self.steer * spec['drift_yaw'] * min(1.0, speed / 12) + slip * (1.6 - 1.1 * thr + assist)
+        r_drift = self.steer * spec['drift_yaw'] * min(1.0, speed / 10) + slip * (1.6 - 1.1 * thr + assist)
         r_target = lerp(r_kin, r_drift, self.slide)
         self.yaw += (r_target - self.yaw) * min(1.0, dt * lerp(12, 6.5, self.slide))
         self.heading = (self.heading + self.yaw * dt) % 360
@@ -434,17 +436,18 @@ class PlayerCar:
         gy = self.game.world.ground_height(self.x, self.z)
         self.y += (gy - self.y) * min(1.0, dt * 14)
 
-        # visuals
-        lat_acc = self.yaw * speed * 0.004
-        self.roll += (clamp(-lat_acc * 1.4 - self.slide * math.copysign(1.2, slip) * 0, -5, 5) - self.roll) * min(1, dt * 6)
-        self.pitch += (clamp(-acc * 0.12, -3, 3) - self.pitch) * min(1, dt * 5)
-        self.spin = vl / self.visual.info['wheel_r'] * 57.3 * dt
+        # lean into the turn like a bike; body tucks forward under throttle
+        lat = math.radians(self.yaw) * speed
+        target_lean = clamp(math.degrees(math.atan2(lat, 9.81)) * 0.8, -32, 32)
+        self.lean += (target_lean - self.lean) * min(1.0, dt * 6)
+        self.lean_fwd += (clamp(acc * 1.2, -8, 10) - self.lean_fwd) * min(1.0, dt * 4)
+        spin = vl / self.visual.info['wheel_r'] * 57.3 * dt
         v = self.visual
         v.position = (self.x, self.y, self.z)
         v.rotation_y = self.heading
-        v.update_visual(steer_deg if abs(slip) < 8 else -slip * 0.6 + steer_deg * 0.4, -self.spin, self.roll,
-                        self.pitch, self.headlights, self.braking or (brk > 0 and speed > 1), self.nitro_on,
-                        self.game.clock)
+        v.update_visual(steer_deg if abs(slip) < 8 else -slip * 0.4 + steer_deg * 0.6, -spin, self.lean, self.wheelie,
+                        self.headlights, self.braking or (brk > 0 and speed > 1), self.nitro_on, self.game.clock,
+                        speed * 3.6, self.first_person, dt, self.lean_fwd)
         self.effects(dt, slip, speed, thr, brk)
         self.scoring(dt, slip, speed)
         self.fx.update(dt)
@@ -468,7 +471,7 @@ class PlayerCar:
                     px, pz = clamp(cx, x0, x1), clamp(cz, z0, z1)
                     dx, dz = cx - px, cz - pz
                     d2 = dx * dx + dz * dz
-                    if d2 < (r + 2.2) ** 2:
+                    if d2 < (r + 2.0) ** 2:
                         near = True
                     if d2 >= r * r:
                         continue
@@ -489,7 +492,7 @@ class PlayerCar:
                     dx, dz = cx - x, cz - z
                     d2 = dx * dx + dz * dz
                     rr = r + cr
-                    if d2 < (rr + 1.5) ** 2:
+                    if d2 < (rr + 1.3) ** 2:
                         near = True
                     if d2 >= rr * rr or d2 < 1e-8:
                         continue
@@ -497,8 +500,8 @@ class PlayerCar:
                     nx, nz = dx / d, dz / d
                     self._resolve(nx, nz, rr - d, x + nx * cr, z + nz * cr, o)
         self.near = near
-        hits = world.hit_cones(self.x + fx * info['L'] * 0.35, self.z + fz * info['L'] * 0.35, self.vx, self.vz, 1.4)
-        hits += world.hit_cones(self.x, self.z, self.vx, self.vz, 1.2)
+        hits = world.hit_cones(self.x + fx * info['L'] * 0.4, self.z + fz * info['L'] * 0.4, self.vx, self.vz, 0.7)
+        hits += world.hit_cones(self.x, self.z, self.vx, self.vz, 0.6)
         if hits:
             self.game.on_cones(hits)
 
@@ -508,19 +511,20 @@ class PlayerCar:
         vn = self.vx * nx + self.vz * nz
         if vn >= 0:
             return
-        e = 0.35
+        e = 0.3
         jx, jz = -(1 + e) * vn * nx, -(1 + e) * vn * nz
         self.vx += jx
         self.vz += jz
-        self.vx *= 0.92
-        self.vz *= 0.92
+        self.vx *= 0.9
+        self.vz *= 0.9
         h = math.radians(self.heading)
         lx, lz = math.sin(h) * offset, math.cos(h) * offset
-        self.yaw += (lz * jx - lx * jz) * 9
+        self.yaw += (lz * jx - lx * jz) * 14
         strength = -vn
-        if strength > 3 and self.crash_cool <= 0:
+        if strength > 2.5 and self.crash_cool <= 0:
             self.crash_cool = 0.25
-            self.fx.sparks_at(px, self.y + 0.5, pz, nx, nz, int(clamp(strength * 2, 6, 24)))
+            self.wheelie_v -= strength * 6
+            self.fx.sparks_at(px, self.y + 0.4, pz, nx, nz, int(clamp(strength * 2, 6, 20)))
             self.game.on_crash(strength)
 
     # --------------------------------------------------------------- effects
@@ -528,44 +532,43 @@ class PlayerCar:
         info = self.visual.info
         h = math.radians(self.heading)
         fx, fz = math.sin(h), math.cos(h)
-        rx, rz = math.cos(h), -math.sin(h)
-        sliding = (abs(slip) > 9 and speed > 5) or (self.braking and speed > 14 and brk > 0.8)
-        wheels = []
-        for i, side in enumerate((-1, 1)):
-            wx = self.x + fx * info['rear_z'] + rx * side * info['track']
-            wz = self.z + fz * info['rear_z'] + rz * side * info['track']
-            wheels.append((wx, self.y + 0.025, wz))
-        for i, p in enumerate(wheels):
-            prev = self.last_skid[i]
-            if sliding:
-                if prev is not None:
-                    self.skids.add(prev, p, info['wheel_w'] * 0.45, clamp(0.25 + abs(slip) / 60, 0.25, 0.65))
-                self.last_skid[i] = p
-            else:
-                self.last_skid[i] = None
+        sliding = (abs(slip) > 9 and speed > 4) or (self.braking and speed > 10 and brk > 0.8)
+        p = (self.x + fx * info['rear_z'], self.y + 0.02, self.z + fz * info['rear_z'])
+        prev = self.last_skid[0]
+        if sliding:
+            if prev is not None:
+                self.skids.add(prev, p, 0.05, clamp(0.3 + abs(slip) / 60, 0.3, 0.7))
+            self.last_skid[0] = p
+        else:
+            self.last_skid[0] = None
         if sliding and abs(slip) > 12:
-            self.smoke_acc += dt * (12 + speed * 0.9) * min(1.0, abs(slip) / 30)
+            self.smoke_acc += dt * (8 + speed * 0.8) * min(1.0, abs(slip) / 30)
             while self.smoke_acc > 1:
                 self.smoke_acc -= 1
-                p = random.choice(wheels)
-                self.fx.smoke_at(p[0], p[1] + 0.3, p[2], self.vx, self.vz, 0.7 + min(speed, 30) / 40)
-        elif speed < 6 and thr > 0.8 and brk > 0.5:
-            self.smoke_acc += dt * 20
+                self.fx.smoke_at(p[0], p[1] + 0.15, p[2], self.vx, self.vz, 0.35 + min(speed, 25) / 60)
+        elif speed < 4 and thr > 0.8 and brk > 0.5:
+            self.smoke_acc += dt * 14
             while self.smoke_acc > 1:
                 self.smoke_acc -= 1
-                p = random.choice(wheels)
-                self.fx.smoke_at(p[0], p[1] + 0.3, p[2], 0, 0, 0.7)
-                self.rpm = 7000
+                self.fx.smoke_at(p[0], p[1] + 0.15, p[2], 0, 0, 0.4)
 
     # --------------------------------------------------------------- scoring
     def scoring(self, dt, slip, speed):
-        drifting = abs(slip) > 11 and speed > 9 and abs(self.vl) > 3
+        drifting = abs(slip) > 11 and speed > 7 and abs(self.vl) > 2.5
+        wheelie_on = self.wheelie > 14 and speed > 3
         self.drifting = drifting
-        if drifting:
-            mult_near = 1.5 if self.near else 1.0
-            self.drift_pts += abs(min(slip, 70)) * speed * 0.22 * dt * mult_near
+        self.wheelie_on = wheelie_on
+        if drifting or wheelie_on:
+            near = 1.5 if self.near else 1.0
+            if drifting:
+                self.drift_pts += abs(min(slip, 70)) * speed * 0.3 * dt * near
+            if wheelie_on:
+                self.drift_pts += (12 + speed * 3.6 * 1.3) * dt * near * (2.0 if drifting else 1.0)
+            trick = 'WHEELIE DRIFT' if drifting and wheelie_on else ('WHEELIE' if wheelie_on else 'DRIFT')
+            if self.trick != 'WHEELIE DRIFT':
+                self.trick = trick
             self.drift_time += dt
-            self.drift_grace = 0.8
+            self.drift_grace = 0.7
             self.chain = 3.2
         elif self.drift_pts > 0:
             self.drift_grace -= dt
@@ -583,12 +586,13 @@ class PlayerCar:
         if pts >= 50:
             self.score += pts
             self.best_drift = max(self.best_drift, pts)
-            grade = next(g for lim, g in GRADES if pts < lim)
+            grade = next(g for lim, g in GRADES[self.trick] if pts < lim)
             self.game.on_drift_end(pts, grade, self.mult)
             if self.drift_pts > 250:
                 self.mult = min(5, self.mult + 1)
         self.drift_pts = 0.0
         self.drift_time = 0.0
+        self.trick = 'DRIFT'
 
     def fail_drift(self):
         if self.drift_pts > 50:
@@ -597,3 +601,4 @@ class PlayerCar:
         self.drift_time = 0.0
         self.mult = 1
         self.chain = 0.0
+        self.trick = 'DRIFT'

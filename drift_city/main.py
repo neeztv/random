@@ -1,16 +1,16 @@
 """
-DRIFT CITY 2.0
+DRIFT CITY 3.0 — elektryczne hulajnogi (KuKirin G2, Ausom Gallop, Kamikaze X)
 
 Uruchomienie:
     pip install -r requirements.txt
     python main.py
 
 Sterowanie:
-    W / ↑        gaz                 SPACJA   ręczny (drift)
-    S / ↓        hamulec / wsteczny  SHIFT    nitro
-    A D / ← →    skręt               Q / E    biegi (tryb manual)
-    C kamera   L światła   T pora dnia   R reset   TAB HUD   ESC pauza   F11 pełny ekran
-Pad: lewa gałka = skręt, triggery = gaz/hamulec, A = ręczny, X = nitro, START = pauza.
+    W / ↑        gaz                 CTRL     WHEELIE (tylne koło)
+    S / ↓        hamulec / wsteczny  SPACJA   tylny hamulec / poślizg
+    A D / ← →    skręt               SHIFT    turbo
+    C kamera (też z kierownicy)   L światła   T pora dnia   R reset   TAB HUD   ESC pauza   F11 pełny ekran
+Pad: lewa gałka = skręt, triggery = gaz/hamulec, B = wheelie, A = hamulec, X = turbo, START = pauza.
 """
 import math
 import random
@@ -24,7 +24,7 @@ window.exit_button.visible = False
 window.fps_counter.enabled = True
 window.color = Vec4(0, 0, 0, 1)
 
-from game.cars import CARS, PAINTS, CarVisual  # noqa: E402
+from game.scooters import PAINTS, SCOOTERS as CARS, ScooterVisual  # noqa: E402
 from game.core import (TIME_ORDER, TIME_PRESETS, BLOCK, MeshBuilder, clamp, lerp, load_save, post_shader,  # noqa: E402
                        world_shader, write_save)
 from game.ui import ACC, ACC2, GOLD, HUD, WHITE, Controls, Garage, MainMenu, Pause, Results, Settings  # noqa: E402
@@ -41,7 +41,7 @@ def angle_diff(a, b):
 
 
 class CameraRig:
-    MODES = ['POŚCIGOWA', 'DALEKA', 'MASKA', 'KINOWA']
+    MODES = ['POŚCIGOWA', 'DALEKA', 'KIEROWNICA', 'KINOWA']
 
     def __init__(self):
         self.pos = Vec3(0, 5, -10)
@@ -54,7 +54,7 @@ class CameraRig:
     def snap(self, car):
         self.yaw = car.heading
         h = math.radians(self.yaw)
-        self.pos = Vec3(car.x - math.sin(h) * 7, car.y + 2.5, car.z - math.cos(h) * 7)
+        self.pos = Vec3(car.x - math.sin(h) * 3.6, car.y + 1.9, car.z - math.cos(h) * 3.6)
 
     def update(self, dt, car, clock):
         speed = car.speed
@@ -66,26 +66,26 @@ class CameraRig:
         self.yaw += angle_diff(self.yaw, target) * min(1.0, dt * 3.5)
         y = math.radians(self.yaw)
         if self.mode in (0, 1):
-            d = (6.6 if self.mode == 0 else 10.5) + min(speed, 60) * 0.04
-            ht = (2.2 if self.mode == 0 else 3.8) + min(speed, 60) * 0.01
+            d = (3.5 if self.mode == 0 else 6.0) + min(speed, 30) * 0.05
+            ht = (1.85 if self.mode == 0 else 2.8) + min(speed, 30) * 0.01
             want = cp + Vec3(-math.sin(y) * d, ht, -math.cos(y) * d)
             self.pos = lerp(self.pos, want, min(1.0, dt * 9))
-            look = cp + fwd * 2.2 + Vec3(0, 0.95, 0)
+            look = cp + fwd * 1.6 + Vec3(0, 1.0, 0)
         elif self.mode == 2:
-            self.pos = cp + fwd * 0.2 + Vec3(0, 1.28, 0)
-            look = self.pos + fwd * 10 + Vec3(0, -0.4, 0)
+            self.pos = cp + fwd * (-0.02) + Vec3(0, 1.5 + math.sin(math.radians(car.wheelie)) * 0.35, 0)
+            look = cp + fwd * 2.0 + Vec3(0, 0.6 + car.wheelie * 0.035, 0)
         else:
             self.orbit += dt * 14
             a = math.radians(self.orbit)
-            want = cp + Vec3(math.sin(a) * 9, 1.6 + math.sin(a * 0.5) * 0.8, math.cos(a) * 9)
+            want = cp + Vec3(math.sin(a) * 4.2, 1.1 + math.sin(a * 0.5) * 0.5, math.cos(a) * 4.2)
             self.pos = lerp(self.pos, want, min(1.0, dt * 4))
-            look = cp + Vec3(0, 0.7, 0)
+            look = cp + Vec3(0, 0.9, 0)
         self.shake = max(0.0, self.shake - dt * 2.2)
         s = self.shake * self.shake * 0.35
         off = Vec3(random.uniform(-s, s), random.uniform(-s, s), random.uniform(-s, s))
         camera.position = self.pos + off
         camera.lookAt(look + off * 0.5, Vec3(0, 1, 0))
-        fov = (78 if self.mode != 2 else 84) + min(speed, 70) * 0.22 + (9 if car.nitro_on else 0)
+        fov = (74 if self.mode != 2 else 80) + min(speed, 30) * 0.45 + (9 if car.nitro_on else 0)
         self.fov += (fov - self.fov) * min(1.0, dt * 3)
         camera.fov = self.fov
 
@@ -97,7 +97,7 @@ class CameraRig:
         camera.position = self.pos
         fwd = (center - self.pos).normalized()
         right = Vec3(fwd.z, 0, -fwd.x).normalized()
-        camera.lookAt(center + Vec3(0, 0.75, 0) - right * shift, Vec3(0, 1, 0))
+        camera.lookAt(center + Vec3(0, 1.0, 0) - right * shift, Vec3(0, 1, 0))
         self.fov += (62 - self.fov) * min(1.0, dt * 3)
         camera.fov = self.fov
 
@@ -125,9 +125,8 @@ class Game(Entity):
         self._podium()
 
         ci = self.save['car']
-        self.visual = CarVisual(ci, self.save['paint'][ci])
+        self.visual = ScooterVisual(ci, self.save['paint'][ci])
         self.car = PlayerCar(self, self.visual)
-        self.car.manual = self.save['gearbox'] == 'manual'
         self.rig = CameraRig()
         self.rig.mode = self.save['camera']
         self.hud = HUD(self)
@@ -185,7 +184,6 @@ class Game(Entity):
         self.car.skids.clear()
         self.car.fx.clear()
         self.car.reset(*START)
-        self.car.manual = self.save['gearbox'] == 'manual'
         self.world.build_all(START[0], START[1])
         self.rig.snap(self.car)
         self.record_announced = False
@@ -198,7 +196,7 @@ class Game(Entity):
         else:
             self.time_left = None
             self.countdown = 0.0
-            self.hud.popup('WOLNA JAZDA', 'SPACJA = ręczny  •  SHIFT = nitro', ACC2, 0.12, 2.6, 2.8)
+            self.hud.popup('WOLNA JAZDA', 'CTRL = wheelie  •  SPACJA = poślizg  •  SHIFT = turbo', ACC2, 0.12, 2.6, 3.2)
 
     def restart(self):
         self.end_session()
@@ -236,8 +234,6 @@ class Game(Entity):
         if key == 'time':
             self.env.set_time(value)
             self.world.set_lamp_power(TIME_PRESETS[value]['lamps'])
-        elif key == 'gearbox':
-            self.car.manual = value == 'manual'
         elif key == 'quality':
             self.apply_quality(value)
         elif key == 'camera':
@@ -284,7 +280,7 @@ class Game(Entity):
             self.flash = 0.35
 
     def on_drift_failed(self, pts):
-        self.hud.popup('DRIFT PRZERWANY', f'-{pts:,}'.replace(',', ' '), Vec4(1, 0.25, 0.2, 1), 0.1, 2.2, 1.6)
+        self.hud.popup('TRIK PRZERWANY', f'-{pts:,}'.replace(',', ' '), Vec4(1, 0.25, 0.2, 1), 0.1, 2.2, 1.6)
         self.sound.play('lost', 0.8)
 
     def on_combo_lost(self):
@@ -304,6 +300,10 @@ class Game(Entity):
 
     def on_shift(self, g):
         self.hud.gear_changed()
+
+    def on_land(self, strength):
+        self.rig.shake = min(0.8, self.rig.shake + strength / 250)
+        self.sound.play('crash', clamp(strength / 400, 0.1, 0.4), 1.6)
 
     # ------------------------------------------------------------------ loop
     def update(self):
@@ -335,15 +335,16 @@ class Game(Entity):
             self.world.update_cones(dt)
             self.rig.update(dt, car, self.clock)
             self.hud.update(dt, car, self.time_left)
-            self.sound.set_engine(car.rpm, car.throttle, car.slide, car.speed, True)
+            self.car.first_person = self.rig.mode == 2
+            self.sound.set_engine(car.ratio, car.throttle, car.slide, car.speed, True)
         elif st == 'pause':
             self.sound.set_engine(0, 0, 0, 0, False)
         else:
             self.visual.rotation_y += dt * (18 if st == 'garage' else 6)
             self.visual.scale = lerp(self.visual.scale_x, 1.0, min(1.0, dt * 8))
-            self.visual.update_visual(0, 0, 0, 0, True, False, False, self.clock)
+            self.visual.update_visual(0, 0, 0, 0, True, False, False, self.clock, 0, False, dt)
             garage = st == 'garage'
-            self.rig.showcase(dt, PODIUM, 7.6 if garage else 10.0, 1.7 if garage else 2.6, 1.6 if garage else 1.9,
+            self.rig.showcase(dt, PODIUM, 4.4 if garage else 5.6, 1.3 if garage else 1.6, 0.95 if garage else 1.25,
                               6 if garage else 9)
             self.world.update(PODIUM.x, PODIUM.z, 1)
             self.sound.set_engine(0, 0, 0, 0, False)
@@ -360,7 +361,7 @@ class Game(Entity):
             h = math.radians(car.heading)
             fwd = Vec3(math.sin(h), 0, math.cos(h))
             power = (0.35 + 0.9 * self.env.night) if car.headlights else 0.0
-            scene.set_shader_input('u_hl_pos', Vec4(car.x + fwd.x * 2.4, car.y + 0.7, car.z + fwd.z * 2.4, power))
+            scene.set_shader_input('u_hl_pos', Vec4(car.x + fwd.x * 0.7, car.y + 0.9, car.z + fwd.z * 0.7, power * 0.8))
             scene.set_shader_input('u_hl_dir', (fwd + Vec3(0, -0.12, 0)).normalized())
         else:
             scene.set_shader_input('u_hl_pos', Vec4(0, 0, 0, 0))

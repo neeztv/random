@@ -3,7 +3,7 @@ import math
 
 from ursina import Entity, Text, Vec4, camera, color, mouse, window
 
-from .cars import CARS, PAINTS
+from .scooters import PAINTS, SCOOTERS as CARS
 from .core import (ACCENT, ACCENT2, FONT_TITLE, FONT_UI, TIME_PRESETS, clamp, lerp, make_gauge_texture,
                    make_gradient_texture, make_ring_texture, make_soft_texture)
 
@@ -161,7 +161,7 @@ class MainMenu(Screen):
         self.title2 = label('CITY', self.root, self.x0, 0.36, 5.2, FONT_TITLE, ACC)
         self.t2x = self.title1.width * self.title1.scale_x + 0.025
         self.line = quad(self.root, self.x0, 0.29, 0.001, 0.005, ACC, origin=(-0.5, 0), z=0.01)
-        self.subtitle = label('NOCNE ULICE  •  EDYCJA 2.0', self.root, self.x0, 0.255, 1.05, col=DIM)
+        self.subtitle = label('ELEKTRYCZNE HULAJNOGI  •  EDYCJA 3.0', self.root, self.x0, 0.255, 1.05, col=DIM)
         items = [('WOLNA JAZDA', lambda: game.start('free'), 'zbieraj punkty'),
                  ('WYZWANIE 3:00', lambda: game.start('challenge'), 'bij rekord'),
                  ('GARAŻ', lambda: game.goto('garage'), ''),
@@ -223,7 +223,7 @@ class Garage(Screen):
             fill = quad(self.root, x0, y - 0.012, 0.001, 0.014, ACC, origin=(-0.5, 0), z=0.01)
             val = label('', self.root, x0 + 0.42, y + 0.02, 0.95, col=WHITE, origin=(0.5, 0))
             self.bars.append((key, fill, val))
-        label('LAKIER', self.root, x0, -0.19, 0.95, col=DIM)
+        label('KOLOR AKCENTU', self.root, x0, -0.19, 0.95, col=DIM)
         self.paint_name = label('', self.root, x0 + 0.42, -0.19, 0.95, col=WHITE, origin=(0.5, 0))
         self.swatches = []
         for i, (_, rgb) in enumerate(PAINTS):
@@ -232,7 +232,7 @@ class Garage(Screen):
             sw = Entity(parent=self.root, model='circle', x=sx, y=-0.245, scale=0.036, color=Vec4(*rgb, 1), collider='box')
             self.swatches.append((ring, sw))
         self.buttons = [MenuButton('GOTOWE', lambda: game.goto('menu'), self.root, x0, -0.35, width=0.42)]
-        label('A/D samochód   •   W/S lakier   •   ENTER gotowe', self.root, x0, -0.44, 0.9, col=DIM)
+        label('A/D hulajnoga   •   W/S kolor   •   ENTER gotowe', self.root, x0, -0.44, 0.9, col=DIM)
         self.left = label('‹', self.root, 0.06, 0.0, 6, FONT_TITLE, Vec4(1, 1, 1, 0.5), origin=(0, 0))
         self.left.collider = 'box'
         self.right = label('›', self.root, ar / 2 - 0.08, 0.0, 6, FONT_TITLE, Vec4(1, 1, 1, 0.5), origin=(0, 0))
@@ -248,7 +248,7 @@ class Garage(Screen):
         ci = g.save['car']
         spec = CARS[ci]
         self.name.text = spec['name']
-        self.idx.text = f'SAMOCHÓD {ci + 1}/{len(CARS)}'
+        self.idx.text = f'HULAJNOGA {ci + 1}/{len(CARS)}  •  {CARS[ci]["vmax_kmh"]} KM/H'
         self.desc.text = spec['desc']
         self.paint_name.text = PAINTS[g.save['paint'][ci]][0].upper()
         self.anim = 0.0
@@ -315,7 +315,6 @@ class Garage(Screen):
 
 SETTINGS = [
     ('time', 'PORA DNIA', ['day', 'sunset', 'night'], lambda v: TIME_PRESETS[v]['label']),
-    ('gearbox', 'SKRZYNIA BIEGÓW', ['auto', 'manual'], lambda v: 'AUTOMAT' if v == 'auto' else 'MANUAL (Q/E)'),
     ('quality', 'GRAFIKA', ['high', 'medium', 'low'], lambda v: {'high': 'WYSOKA', 'medium': 'ŚREDNIA', 'low': 'NISKA'}[v]),
     ('camera', 'KAMERA', [0, 1, 2, 3], lambda v: ['POŚCIGOWA', 'DALEKA', 'MASKA', 'KINOWA'][v]),
     ('volume', 'GŁOŚNOŚĆ', [0.0, 0.2, 0.4, 0.6, 0.8, 1.0], lambda v: f'{int(v * 100)}%'),
@@ -374,8 +373,8 @@ class Settings(Screen):
 
 
 CONTROLS = [
-    ('W', 'Gaz'), ('S', 'Hamulec / wsteczny'), ('A / D', 'Skręt'), ('SPACJA', 'Ręczny — inicjuj drift'),
-    ('SHIFT', 'Nitro (ładuje się w drifcie)'), ('Q / E', 'Bieg w dół / w górę (manual)'), ('C', 'Zmień kamerę'),
+    ('W', 'Gaz'), ('S', 'Hamulec / wsteczny'), ('A / D', 'Skręt'), ('SPACJA', 'Tylny hamulec — poślizg'),
+    ('CTRL', 'WHEELIE — wyrwij na tylne koło'), ('SHIFT', 'Turbo (ładuje się przy trikach)'), ('C', 'Kamera (też z kierownicy)'),
     ('L', 'Światła'), ('T', 'Pora dnia'), ('R', 'Reset na drogę'), ('TAB', 'Ukryj HUD'), ('ESC', 'Pauza'),
 ]
 
@@ -394,8 +393,8 @@ class Controls(Screen):
             quad(self.root, x0, y, 0.2, 0.042, Vec4(1, 1, 1, 0.07), origin=(-0.5, 0), z=0.01)
             label(k, self.root, x0 + 0.1, y, 1.05, col=ACC2, origin=(0, 0))
             label(v, self.root, x0 + 0.23, y, 1.05, col=WHITE)
-        label('Strzałki działają jak WASD.   PAD: gałka skręt • triggery gaz/hamulec • A ręczny • X nitro', self.root, x0, -0.34, 0.95, col=DIM)
-        label('Drift = ręczny lub gaz w zakręcie. Kontruj, żeby utrzymać kąt!', self.root, x0, -0.39, 0.95, col=GOLD)
+        label('Strzałki = WASD.   PAD: gałka skręt • triggery gaz/hamulec • B wheelie • A hamulec • X turbo', self.root, x0, -0.34, 0.95, col=DIM)
+        label('Trzymaj CTRL przy prędkości, żeby jechać na tylnym kole. Wheelie + drift = x2 punktów!', self.root, x0, -0.39, 0.95, col=GOLD)
         self.buttons = [MenuButton('WRÓĆ', lambda: game.goto('menu'), self.root, x0, -0.455, width=0.3)]
 
     def update(self, dt):
@@ -521,7 +520,7 @@ class HUD:
         self.gear_pop = 0.0
         # nitro
         nx = gx - gs / 2 - 0.035
-        label('NOS', r, nx, gy - 0.165, 0.85, col=ACC2, origin=(0, 0))
+        label('TURBO', r, nx, gy - 0.165, 0.85, col=ACC2, origin=(0, 0))
         quad(r, nx, gy - 0.15, 0.022, 0.26, Vec4(1, 1, 1, 0.1), origin=(0, -0.5))
         self.nos = quad(r, nx, gy - 0.15, 0.016, 0.26, ACC2, origin=(0, -0.5), z=0.01)
 
@@ -589,11 +588,11 @@ class HUD:
     def update(self, dt, car, time_left=None):
         kmh = int(car.speed * 3.6)
         self.speed.text = str(kmh)
-        f = clamp((car.rpm - 0) / 8000, 0, 1)
+        f = clamp(car.speed * 3.6 / 120, 0, 1)
         self.needle.rotation_z = -135 + 270 * f
-        red = car.rpm > 7000
+        red = car.speed * 3.6 > 100 or car.nitro_on
         self.needle.color = Vec4(1, 0.15, 0.1, 1) if red else ACC
-        self.gear.text = 'R' if car.vl < -0.5 else str(car.gear)
+        self.gear.text = 'R' if car.vl < -0.5 else ('W' if car.wheelie > 8 else 'D')
         self.gear_pop = max(0.0, self.gear_pop - dt * 4)
         self.gear.scale = 2.2 + 1.2 * self.gear_pop
         self.gear.color = lerp(WHITE, ACC, self.gear_pop)
@@ -625,6 +624,7 @@ class HUD:
             self.drift_pts.text = f'{pts:,}'.replace(',', ' ') if pts else ''
             self.drift_pts.scale = 3.4 + 0.5 * self.pop
             self.drift_pts.color = Vec4(1, 1, 1, a)
+            self.drift_lbl.text = car.trick
             self.drift_lbl.color = Vec4(ACCENT[0], ACCENT[1], ACCENT[2], a)
             self.mult.text = f'x{car.mult}'
             self.mult.enabled = self.mult_ring.enabled = car.mult > 1

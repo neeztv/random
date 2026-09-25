@@ -47,8 +47,8 @@ TIME_PRESETS = {
 TIME_ORDER = ['day', 'sunset', 'night']
 
 DEFAULT_SAVE = {
-    'best_score': 0, 'best_drift': 0, 'car': 0, 'paint': [0, 0, 0],
-    'time': 'sunset', 'gearbox': 'auto', 'quality': 'high', 'volume': 0.7, 'camera': 0,
+    'best_score': 0, 'best_drift': 0, 'car': 0, 'paint': [0, 1, 2],
+    'time': 'day', 'quality': 'high', 'volume': 0.7, 'camera': 0,
 }
 
 
@@ -578,8 +578,8 @@ def make_soft_texture(size=64, power=1.6):
     return _to_texture(img, mipmap=False)
 
 
-def make_gauge_texture(redline_frac=0.82, size=512):
-    """Tachometer face drawn at 2x and downsampled for anti-aliasing."""
+def make_gauge_texture(labels=('0', '20', '40', '60', '80', '100', '120'), redline_frac=100 / 120, size=512, minor=4):
+    """Speedometer face drawn at 2x and downsampled for anti-aliasing."""
     S = size * 2
     img = Image.new('RGBA', (S, S), (0, 0, 0, 0))
     d = ImageDraw.Draw(img)
@@ -591,19 +591,20 @@ def make_gauge_texture(redline_frac=0.82, size=512):
     rl = start + sweep * redline_frac
     d.arc([c - r_out, c - r_out, c + r_out, c + r_out], rl, start + sweep, fill=(255, 40, 40, 230), width=22)
     try:
-        font = ImageFont.truetype(FONT_UI_FILE, 64)
+        font = ImageFont.truetype(FONT_UI_FILE, 58)
     except OSError:
         font = ImageFont.load_default()
-    for i in range(0, 81):
-        a = math.radians(start + sweep * i / 80)
-        major = i % 10 == 0
+    n = (len(labels) - 1) * minor
+    for i in range(0, n + 1):
+        a = math.radians(start + sweep * i / n)
+        major = i % minor == 0
         r1 = r_out - (46 if major else 22)
-        col = (255, 70, 60, 255) if i / 80 >= redline_frac else (235, 240, 255, 230 if major else 120)
+        col = (255, 70, 60, 255) if i / n >= redline_frac else (235, 240, 255, 230 if major else 120)
         d.line([c + math.cos(a) * r1, c + math.sin(a) * r1, c + math.cos(a) * r_out, c + math.sin(a) * r_out],
                fill=col, width=9 if major else 4)
         if major:
             rt = r_out - 100
-            label = str(i // 10)
+            label = labels[i // minor]
             tw = d.textlength(label, font=font)
             d.text((c + math.cos(a) * rt - tw / 2, c + math.sin(a) * rt - 38), label, font=font, fill=col)
     img = img.resize((size, size), Image.LANCZOS)

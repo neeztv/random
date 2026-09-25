@@ -5,21 +5,20 @@ import random
 from array import array
 from pathlib import Path
 
-from panda3d.core import Filename, SamplerState
+from panda3d.core import Filename, SamplerState, getModelPath
 from PIL import Image, ImageDraw, ImageFilter, ImageFont
 from ursina import Mesh, Shader, Texture
 
 ROOT = Path(__file__).resolve().parent.parent
 
 
-def panda_path(p):
-    return Filename.from_os_specific(str(p)).get_fullpath()
-
-
-FONT_TITLE = panda_path(ROOT / 'assets' / 'fonts' / 'RussoOne-Regular.ttf')
-FONT_UI = panda_path(ROOT / 'assets' / 'fonts' / 'Rajdhani-Bold.ttf')
-FONT_UI_FILE = str(ROOT / 'assets' / 'fonts' / 'Rajdhani-Bold.ttf')
-FONT_TITLE_FILE = str(ROOT / 'assets' / 'fonts' / 'RussoOne-Regular.ttf')
+# Fonts are referenced by file name: Ursina 7 resolves them through Panda's model path,
+# Ursina 8+ searches the game folder for the name (it rejects full paths on Windows).
+FONT_DIR = ROOT / 'assets' / 'fonts'
+getModelPath().append_directory(Filename.from_os_specific(str(FONT_DIR)))
+FONT_TITLE = 'RussoOne-Regular.ttf'
+FONT_UI = 'Rajdhani-Bold.ttf'
+FONT_UI_FILE = str(FONT_DIR / FONT_UI)
 SAVE_FILE = ROOT / 'save.json'
 CACHE_DIR = ROOT / '.cache'
 

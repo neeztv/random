@@ -84,7 +84,7 @@ class CameraRig:
         s = self.shake * self.shake * 0.35
         off = Vec3(random.uniform(-s, s), random.uniform(-s, s), random.uniform(-s, s))
         camera.position = self.pos + off
-        camera.look_at(look + off * 0.5, up=Vec3(0, 1, 0))
+        camera.lookAt(look + off * 0.5, Vec3(0, 1, 0))
         fov = (78 if self.mode != 2 else 84) + min(speed, 70) * 0.22 + (9 if car.nitro_on else 0)
         self.fov += (fov - self.fov) * min(1.0, dt * 3)
         camera.fov = self.fov
@@ -97,7 +97,7 @@ class CameraRig:
         camera.position = self.pos
         fwd = (center - self.pos).normalized()
         right = Vec3(fwd.z, 0, -fwd.x).normalized()
-        camera.look_at(center + Vec3(0, 0.75, 0) - right * shift, up=Vec3(0, 1, 0))
+        camera.lookAt(center + Vec3(0, 0.75, 0) - right * shift, Vec3(0, 1, 0))
         self.fov += (62 - self.fov) * min(1.0, dt * 3)
         camera.fov = self.fov
 
